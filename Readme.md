@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="YOUR_PNG_URL" width="160" />
+</p>
+
+
 # Telegram File Sharing Bot
 
 A powerful **Telegram file-sharing bot** with **private channel storage**, **force-join rules**, **admin-only link creation**, and **broadcast messaging** — all running **without a VPS** (hosted on Render).
