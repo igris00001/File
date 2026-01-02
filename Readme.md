@@ -97,7 +97,7 @@ Example: -1000000000000
 
 Add these in **Render → Environment**:
 BOT_TOKEN   = your_bot_token_here CHANNEL_ID = -1000000000000 ADMIN_ID   = 1234567890
-Copy code
+
 
 ⚠️ Do NOT hardcode tokens in `bot.py`.
 
@@ -108,11 +108,9 @@ Copy code
 ### Create download link
 Send a **private channel file link** to the bot:
 https://t.me/c/0000000000/17
-Copy code
 
 Bot replies:
 https://t.me/YourBotUsername?start=17
-Copy code
 
 ---
 
