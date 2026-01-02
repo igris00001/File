@@ -150,7 +150,7 @@ https://t.me/YourBotUsername?start=17
 ## 🧑‍💻 Author
 
 Made by [@xchup](https://t.me/xchup)
- [✅](www.github.com/bryt777)
+ [✅](http://github.com/bryt777)
 
 ---
 
