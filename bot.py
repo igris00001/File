@@ -9,9 +9,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # ===== ENV =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-
-# MULTIPLE ADMINS (comma separated IDs in Render)
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS").split(",")]
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 # ===== FORCE JOIN CHANNELS =====
 FORCE_CHANNELS = [
@@ -19,23 +17,23 @@ FORCE_CHANNELS = [
     "@USRxMEE"
 ]
 
+# ===== SETTINGS =====
+LINK_EXPIRY_SECONDS = 10 * 60  # ⏳ 10 minutes
+
 bot = telebot.TeleBot(BOT_TOKEN)
 LINK_RE = re.compile(r"t.me/c/\d+/(\d+)")
 
 USERS_FILE = "users.json"
 LINKS_FILE = "links.json"
 
-# ===== SETTINGS =====
-LINK_EXPIRY_HOURS = 24  # ⏳ change expiry here
-
 # ===== INIT FILES =====
-for file, default in [
-    (USERS_FILE, []),
-    (LINKS_FILE, {})
-]:
-    if not os.path.exists(file):
-        with open(file, "w") as f:
-            json.dump(default, f)
+if not os.path.exists(USERS_FILE):
+    with open(USERS_FILE, "w") as f:
+        json.dump([], f)
+
+if not os.path.exists(LINKS_FILE):
+    with open(LINKS_FILE, "w") as f:
+        json.dump({}, f)
 
 def load_users():
     return json.load(open(USERS_FILE))
@@ -55,12 +53,12 @@ def load_links():
 def save_links(data):
     json.dump(data, open(LINKS_FILE, "w"), indent=2)
 
-# ===== FORCE JOIN =====
+# ===== FORCE JOIN CHECK =====
 def is_joined(user_id):
     for ch in FORCE_CHANNELS:
         try:
             status = bot.get_chat_member(ch, user_id).status
-            if status not in ["member", "administrator", "creator"]:
+            if status not in ("member", "administrator", "creator"):
                 return False
         except:
             return False
@@ -88,7 +86,7 @@ def join_buttons(code):
 # ===== CALLBACK: GET FILE =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("get_"))
 def get_file(call):
-    code = call.data.split("_")[1]
+    code = call.data.split("_", 1)[1]
     links = load_links()
 
     if code not in links:
@@ -96,6 +94,7 @@ def get_file(call):
         return
 
     data = links[code]
+
     if time.time() > data["expires"]:
         del links[code]
         save_links(links)
@@ -145,13 +144,13 @@ def start(msg):
     else:
         bot.reply_to(msg, "👋 Welcome!")
 
-# ===== ADMIN HANDLER =====
+# ===== ADMIN ACTIONS =====
 @bot.message_handler(func=lambda m: True)
 def admin_handler(msg):
     add_user(msg.from_user.id)
 
-    # ---- ONLY ADMINS BELOW ----
-    if msg.from_user.id not in ADMIN_IDS:
+    # ---- ONLY ADMIN ----
+    if msg.from_user.id != ADMIN_ID:
         return
 
     # ---- BROADCAST (TEXT / MEDIA) ----
@@ -165,7 +164,8 @@ def admin_handler(msg):
                     bot.copy_message(uid, msg.chat.id, msg.reply_to_message.message_id)
                 else:
                     text = msg.text.replace("/broadcast", "").strip()
-                    bot.send_message(uid, text)
+                    if text:
+                        bot.send_message(uid, text)
                 sent += 1
             except:
                 pass
@@ -173,7 +173,7 @@ def admin_handler(msg):
         bot.reply_to(msg, f"✅ Broadcast sent to {sent} users.")
         return
 
-    # ---- LINK CREATION ----
+    # ---- CREATE EXPIRING LINK ----
     match = LINK_RE.search(msg.text or "")
     if not match:
         return
@@ -184,14 +184,14 @@ def admin_handler(msg):
     code = str(int(time.time() * 1000))
     links[code] = {
         "message_id": message_id,
-        "expires": time.time() + (LINK_EXPIRY_HOURS * 3600)
+        "expires": time.time() + LINK_EXPIRY_SECONDS
     }
 
     save_links(links)
 
     bot.reply_to(
         msg,
-        f"✅ Download link (expires in {LINK_EXPIRY_HOURS}h):\n\n"
+        "✅ Download link (expires in 10 minutes):\n\n"
         f"https://t.me/{bot.get_me().username}?start={code}"
     )
 
