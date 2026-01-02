@@ -1,6 +1,9 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/igris00001/File/main/Logo.png" width="160" />
+  <img src="https://raw.githubusercontent.com/igris00001/File/main/Logo.png"
+       width="160"
+       style="border-radius:50%;" />
 </p>
+
 
 
 
