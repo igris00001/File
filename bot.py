@@ -37,7 +37,7 @@ FORCE_CHANNELS = [
 LINK_EXPIRY_SECONDS = 10 * 60  # 10 minutes
 
 bot = telebot.TeleBot(BOT_TOKEN)
-LINK_RE = re.compile(r"t.me/c/\\d+/(\\d+)")
+LINK_RE = re.compile(r"t\.me/c/\d+/(\d+)")
 
 USERS_FILE = "users.json"
 LINKS_FILE = "links.json"
