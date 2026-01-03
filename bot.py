@@ -1,177 +1,152 @@
 # Made by @xchup
+# Pyrogram File Sharing Bot with Expiring Links
 
 import os
 import time
-import re
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import asyncio
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+# ================= CONFIG =================
 
-# =====================================================
-# DUMMY HTTP SERVER (Render Free Web Service)
-# =====================================================
-
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
-
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), DummyHandler)
-    server.serve_forever()
-
-threading.Thread(target=run_dummy_server, daemon=True).start()
-
-# =====================================================
-# CONFIG
-# =====================================================
-
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # private storage channel
+
+ADMIN_ID = int(os.getenv("ADMIN_ID"))          # single admin
+DB_CHANNEL_ID = int(os.getenv("CHANNEL_ID"))   # private storage channel
 
 FORCE_CHANNELS = [
-    ("Channel 1️⃣", "https://t.me/Letsucks"),
-    ("Channel 2️⃣", "https://t.me/USRxMEE")
+    -1003599850450,   # channel 1 ID
+    -1001234567890    # channel 2 ID (add more if needed)
 ]
 
-LINK_EXPIRY_SECONDS = 10 * 60  # 10 minutes
+LINK_EXPIRY = 600  # 10 minutes (seconds)
 
-bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+# ================= BOT =================
 
-LINK_RE = re.compile(r"t\.me/c/\d+/(\d+)")
+app = Client(
+    "filesharebot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
 
-# key -> (message_id, expiry_time)
-links = {}
+# In-memory link store
+LINKS = {}  # token: (message_id, expire_time)
 
-# =====================================================
-# FORCE JOIN CHECK
-# =====================================================
+# ================= HELPERS =================
 
-def is_joined(user_id):
-    for _, url in FORCE_CHANNELS:
+async def is_joined(user_id):
+    for ch in FORCE_CHANNELS:
         try:
-            username = url.split("/")[-1]
-            status = bot.get_chat_member(f"@{username}", user_id).status
-            if status not in ("member", "administrator", "creator"):
+            member = await app.get_chat_member(ch, user_id)
+            if member.status not in ("member", "administrator", "owner"):
                 return False
         except:
             return False
     return True
 
-def join_buttons(key):
-    kb = InlineKeyboardMarkup(row_width=1)
-    for name, url in FORCE_CHANNELS:
-        kb.add(InlineKeyboardButton(name, url=url))
-    kb.add(
-        InlineKeyboardButton(
-            "📂 Get File",
-            callback_data=f"get_{key}"
-        )
-    )
-    return kb
 
-# =====================================================
-# CALLBACK: GET FILE
-# =====================================================
+def join_buttons():
+    buttons = []
+    for i, ch in enumerate(FORCE_CHANNELS, start=1):
+        buttons.append([
+            InlineKeyboardButton(
+                f"Channel {i}",
+                url=f"https://t.me/c/{str(ch)[4:]}"
+            )
+        ])
+    buttons.append([InlineKeyboardButton("📥 Get File", callback_data="recheck")])
+    return InlineKeyboardMarkup(buttons)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("get_"))
-def get_file(c):
-    key = c.data.split("_", 1)[1]
 
-    if key not in links:
-        bot.answer_callback_query(c.id, "❌ Link expired", show_alert=True)
-        return
+# ================= START =================
 
-    msg_id, expiry = links[key]
-    if time.time() > expiry:
-        del links[key]
-        bot.answer_callback_query(c.id, "⏰ Link expired", show_alert=True)
-        return
-
-    if not is_joined(c.from_user.id):
-        bot.answer_callback_query(
-            c.id,
-            "❌ Join all channels first!",
-            show_alert=True
-        )
-        return
-
-    # Clean UI (Option A)
-    bot.delete_message(c.message.chat.id, c.message.message_id)
-
-    bot.copy_message(
-        c.message.chat.id,
-        CHANNEL_ID,
-        msg_id
-    )
-
-    bot.answer_callback_query(c.id, "📦 File sent!")
-
-# =====================================================
-# START COMMAND
-# =====================================================
-
-@bot.message_handler(commands=["start"])
-def start(msg):
-    args = msg.text.split()
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    args = message.command
 
     if len(args) == 2:
-        key = args[1]
+        token = args[1]
 
-        if key not in links:
-            bot.send_message(msg.chat.id, "❌ Link expired or invalid.")
-            return
+        if token not in LINKS:
+            return await message.reply("❌ Link expired or invalid.")
 
-        msg_id, expiry = links[key]
-        if time.time() > expiry:
-            del links[key]
-            bot.send_message(msg.chat.id, "⏰ Link expired.")
-            return
+        msg_id, exp = LINKS[token]
+        if time.time() > exp:
+            LINKS.pop(token, None)
+            return await message.reply("⌛ This link has expired.")
 
-        if not is_joined(msg.from_user.id):
-            bot.send_message(
-                msg.chat.id,
+        if not await is_joined(message.from_user.id):
+            return await message.reply(
                 "🔒 Join all channels to get the file:",
-                reply_markup=join_buttons(key)
+                reply_markup=join_buttons()
             )
-            return
 
-        bot.copy_message(msg.chat.id, CHANNEL_ID, msg_id)
+        await client.copy_message(
+            chat_id=message.chat.id,
+            from_chat_id=DB_CHANNEL_ID,
+            message_id=msg_id
+        )
         return
 
-    bot.send_message(msg.chat.id, "👋 Welcome!")
+    await message.reply("👋 Welcome!\nSend me a Telegram file link (admin only).")
 
-# =====================================================
-# ADMIN: CREATE LINK
-# =====================================================
 
-@bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID)
-def admin_handler(m):
-    match = LINK_RE.search(m.text or "")
-    if not match:
+# ================= RECHECK =================
+
+@app.on_callback_query(filters.regex("recheck"))
+async def recheck(client, query):
+    if await is_joined(query.from_user.id):
+        await query.message.edit_text(
+            "✅ Verified!\nNow open the download link again."
+        )
+    else:
+        await query.answer("❌ Join all channels first!", show_alert=True)
+
+
+# ================= ADMIN LINK CREATION =================
+
+@app.on_message(filters.private & filters.text)
+async def admin_handler(client, message):
+    if message.from_user.id != ADMIN_ID:
         return
 
-    message_id = int(match.group(1))
-    key = str(int(time.time() * 1000))
+    if "t.me/c/" not in message.text:
+        return await message.reply("❌ Send a Telegram private file link.")
 
-    links[key] = (
-        message_id,
-        time.time() + LINK_EXPIRY_SECONDS
+    try:
+        msg_id = int(message.text.split("/")[-1])
+    except:
+        return await message.reply("❌ Invalid link.")
+
+    token = str(int(time.time() * 1000))
+    LINKS[token] = (msg_id, time.time() + LINK_EXPIRY)
+
+    await message.reply(
+        f"✅ Download link (expires in 10 minutes):\n\n"
+        f"https://t.me/{(await client.get_me()).username}?start={token}"
     )
 
-    bot.reply_to(
-        m,
-        "✅ Download link (expires in 10 minutes):\n\n"
-        f"https://t.me/{bot.get_me().username}?start={key}"
-    )
 
-# =====================================================
-# RUN BOT
-# =====================================================
+# ================= DUMMY SERVER (RENDER FREE) =================
 
-bot.infinity_polling()
+from flask import Flask
+from threading import Thread
+
+web = Flask(__name__)
+
+@web.route("/")
+def home():
+    return "Bot is alive"
+
+def run_web():
+    web.run(host="0.0.0.0", port=10000)
+
+Thread(target=run_web).start()
+
+# ================= RUN =================
+
+app.run()
+
