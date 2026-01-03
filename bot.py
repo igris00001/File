@@ -1,218 +1,121 @@
 # Made by @xchup
-import telebot
+
 import os
-import re
-import json
 import time
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import re
+from flask import Flask, request
+import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# ================= DUMMY HTTP SERVER (RENDER FREE) =================
-
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
-
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), DummyHandler)
-    server.serve_forever()
-
-threading.Thread(target=run_dummy_server, daemon=True).start()
-
-# ================= BOT CONFIG =================
-
+# ========= CONFIG =========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # private storage channel
 
 FORCE_CHANNELS = [
-    "@Letsucks",
-    "@USRxMEE"
+    ("Channel 1️⃣", "https://t.me/Letsucks"),
+    ("Channel 2️⃣", "https://t.me/USRxMEE")
 ]
 
-LINK_EXPIRY_SECONDS = 10 * 60  # 10 minutes
+LINK_EXPIRY = 600  # 10 minutes
 
-bot = telebot.TeleBot(BOT_TOKEN)
-LINK_RE = re.compile(r"t\.me/c/\d+/(\d+)")
+# ==========================
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+app = Flask(__name__)
 
-USERS_FILE = "users.json"
-LINKS_FILE = "links.json"
+LINK_RE = re.compile(r"t.me/c/\d+/(\d+)")
 
-# ================= INIT FILES =================
+# store expiry
+links = {}
 
-if not os.path.exists(USERS_FILE):
-    with open(USERS_FILE, "w") as f:
-        json.dump([], f)
-
-if not os.path.exists(LINKS_FILE):
-    with open(LINKS_FILE, "w") as f:
-        json.dump({}, f)
-
-def load_users():
-    with open(USERS_FILE) as f:
-        return json.load(f)
-
-def save_users(data):
-    with open(USERS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-def add_user(uid):
-    users = load_users()
-    if uid not in users:
-        users.append(uid)
-        save_users(users)
-
-def load_links():
-    with open(LINKS_FILE) as f:
-        return json.load(f)
-
-def save_links(data):
-    with open(LINKS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-# ================= FORCE JOIN =================
-
-def is_joined(user_id):
-    for ch in FORCE_CHANNELS:
+# ========= FORCE JOIN =========
+def joined(user_id):
+    for _, url in FORCE_CHANNELS:
         try:
-            status = bot.get_chat_member(ch, user_id).status
-            if status not in ("member", "administrator", "creator"):
+            chat = url.split("/")[-1]
+            status = bot.get_chat_member(f"@{chat}", user_id).status
+            if status not in ["member", "administrator", "creator"]:
                 return False
         except:
             return False
     return True
 
-def join_buttons(code):
-    kb = InlineKeyboardMarkup(row_width=1)
-    for i, ch in enumerate(FORCE_CHANNELS, start=1):
-        kb.add(
-            InlineKeyboardButton(
-                f"𝐂𝐡𝐚𝐧𝐧𝐞𝐥 {i}️⃣",
-                url=f"https://t.me/{ch[1:]}"
-            )
-        )
-    kb.add(
-        InlineKeyboardButton(
-            "📥 Get File",
-            callback_data=f"get_{code}"
-        )
-    )
+def join_buttons():
+    kb = InlineKeyboardMarkup()
+    for name, url in FORCE_CHANNELS:
+        kb.add(InlineKeyboardButton(name, url=url))
+    kb.add(InlineKeyboardButton("✅ Joined", callback_data="check"))
     return kb
 
-# ================= CALLBACK =================
+@bot.callback_query_handler(func=lambda c: c.data == "check")
+def recheck(c):
+    if joined(c.from_user.id):
+        bot.answer_callback_query(c.id, "Verified ✅")
+        bot.delete_message(c.message.chat.id, c.message.message_id)
+    else:
+        bot.answer_callback_query(c.id, "Join all channels ❌", show_alert=True)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("get_"))
-def get_file(call):
-    code = call.data.split("_", 1)[1]
-    links = load_links()
-
-    if code not in links:
-        bot.answer_callback_query(call.id, "❌ Link expired", show_alert=True)
-        return
-
-    data = links[code]
-    if time.time() > data["expires"]:
-        del links[code]
-        save_links(links)
-        bot.answer_callback_query(call.id, "❌ Link expired", show_alert=True)
-        return
-
-    if not is_joined(call.from_user.id):
-        bot.answer_callback_query(call.id, "❌ Join all channels first!", show_alert=True)
-        return
-
-    bot.copy_message(
-        call.message.chat.id,
-        CHANNEL_ID,
-        data["message_id"]
-    )
-
-# ================= START =================
-
+# ========= START =========
 @bot.message_handler(commands=["start"])
-def start(msg):
-    add_user(msg.from_user.id)
-    args = msg.text.split()
+def start(m):
+    args = m.text.split()
 
     if len(args) == 2:
-        code = args[1]
-        links = load_links()
+        key = args[1]
 
-        if code not in links:
-            bot.reply_to(msg, "❌ Link expired.")
+        if key not in links:
+            bot.send_message(m.chat.id, "❌ Link expired or invalid")
             return
 
-        data = links[code]
-        if time.time() > data["expires"]:
-            del links[code]
-            save_links(links)
-            bot.reply_to(msg, "❌ Link expired.")
+        msg_id, expiry = links[key]
+        if time.time() > expiry:
+            del links[key]
+            bot.send_message(m.chat.id, "⏰ Link expired")
             return
 
-        if not is_joined(msg.from_user.id):
+        if not joined(m.from_user.id):
             bot.send_message(
-                msg.chat.id,
-                "🔒 Join all channels to get the file:",
-                reply_markup=join_buttons(code)
+                m.chat.id,
+                "🔒 Join required:",
+                reply_markup=join_buttons()
             )
             return
 
-        bot.copy_message(msg.chat.id, CHANNEL_ID, data["message_id"])
-    else:
-        bot.reply_to(msg, "👋 Welcome!")
-
-# ================= ADMIN =================
-
-@bot.message_handler(func=lambda m: True)
-def admin_handler(msg):
-    add_user(msg.from_user.id)
-
-    if msg.from_user.id != ADMIN_ID:
+        bot.copy_message(m.chat.id, CHANNEL_ID, msg_id)
         return
 
-    # Broadcast
-    if msg.text and msg.text.startswith("/broadcast"):
-        users = load_users()
-        sent = 0
-        for uid in users:
-            try:
-                if msg.reply_to_message:
-                    bot.copy_message(uid, msg.chat.id, msg.reply_to_message.message_id)
-                else:
-                    text = msg.text.replace("/broadcast", "").strip()
-                    if text:
-                        bot.send_message(uid, text)
-                sent += 1
-            except:
-                pass
-        bot.reply_to(msg, f"✅ Broadcast sent to {sent} users.")
-        return
+    bot.send_message(m.chat.id, "👋 Welcome!")
 
-    # Create link
-    match = LINK_RE.search(msg.text or "")
+# ========= ADMIN LINK =========
+@bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID)
+def admin(m):
+    match = LINK_RE.search(m.text or "")
     if not match:
         return
 
-    message_id = int(match.group(1))
-    links = load_links()
-
-    code = str(int(time.time() * 1000))
-    links[code] = {
-        "message_id": message_id,
-        "expires": time.time() + LINK_EXPIRY_SECONDS
-    }
-    save_links(links)
+    msg_id = int(match.group(1))
+    key = str(int(time.time()))
+    links[key] = (msg_id, time.time() + LINK_EXPIRY)
 
     bot.reply_to(
-        msg,
-        f"✅ Download link (expires in 10 minutes):\n\n"
-        f"https://t.me/{bot.get_me().username}?start={code}"
+        m,
+        f"✅ Download link (10 min):\n"
+        f"https://t.me/{bot.get_me().username}?start={key}"
     )
 
-# ================= RUN =================
+# ========= WEBHOOK =========
+@app.route("/", methods=["POST"])
+def webhook():
+    update = telebot.types.Update.de_json(request.stream.read().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "OK", 200
 
-bot.infinity_polling()
+@app.route("/")
+def home():
+    return "Bot running"
+
+# ========= START =========
+if __name__ == "__main__":
+    bot.remove_webhook()
+    bot.set_webhook(url=os.getenv("WEBHOOK_URL"))
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
